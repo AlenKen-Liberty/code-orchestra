@@ -1,0 +1,10 @@
+agents:
+  claude_planner:
+    base_url: "http://localhost:8001"
+    description: "Planning and architectural design agent"
+  claude_reviewer:
+    base_url: "http://localhost:8001"
+    description: "Code review agent"
+  codex_coder:
+    base_url: "http://localhost:8002"
+    description: "Code implementation agent"
