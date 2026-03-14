@@ -8,3 +8,6 @@ agents:
   codex_coder:
     base_url: "http://localhost:8002"
     description: "Code implementation agent"
+  gemini_reviewer:
+    base_url: "http://localhost:8003"
+    description: "Design review and code review agent powered by Gemini"

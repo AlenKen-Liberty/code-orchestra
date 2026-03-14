@@ -31,10 +31,10 @@ async def invoke_gemini(
     """
     Invoke Gemini CLI with the specified prompt and model.
 
-    Assumes the geminicli command is available in PATH.
-    Command format: geminicli --model <model> --prompt <prompt>
+    Assumes the gemini command is available in PATH.
+    Command format: gemini --model <model> <prompt>
     """
-    args = ["geminicli", "--model", model]
+    args = ["gemini", "--model", model]
 
     proc = await asyncio.create_subprocess_exec(
         *args,

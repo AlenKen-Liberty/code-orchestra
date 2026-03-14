@@ -34,10 +34,12 @@ def _get_env_bool(name: str, default: bool) -> bool:
 
 CLAUDE_PORT = _get_env_int("CLAUDE_PORT", 8001)
 CODEX_PORT = _get_env_int("CODEX_PORT", 8002)
+GEMINI_PORT = _get_env_int("GEMINI_PORT", 8003)
 ORCHESTRATOR_PORT = _get_env_int("ORCHESTRATOR_PORT", 8000)
 
 CLAUDE_BASE_URL = _get_env("CLAUDE_BASE_URL", "http://localhost:8001")
 CODEX_BASE_URL = _get_env("CODEX_BASE_URL", "http://localhost:8002")
+GEMINI_BASE_URL = _get_env("GEMINI_BASE_URL", "http://localhost:8003")
 
 CLI_TIMEOUT = _get_env_float("CLI_TIMEOUT", 300.0)
 HTTP_TIMEOUT = _get_env_float("HTTP_TIMEOUT", 350.0)
@@ -56,3 +58,5 @@ CLAUDE_REVIEWER_MODEL = _get_env("CLAUDE_REVIEWER_MODEL", "claude-haiku-4-5")
 
 CODEX_MODEL = _get_env("CODEX_MODEL", "gpt-5.2-codex")
 CODEX_TIER = _get_env("CODEX_TIER", "xhigh")
+
+GEMINI_MODEL = _get_env("GEMINI_MODEL", "gemini-3.1-pro-preview")
