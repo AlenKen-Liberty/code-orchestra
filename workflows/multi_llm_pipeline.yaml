@@ -1,0 +1,276 @@
+name: "multi_llm_pipeline"
+description: "Multi-agent workflow with Claude, Gemini, and GPT models"
+version: "1.0"
+
+# 全局配置
+config:
+  timeout_per_stage: 300  # 秒
+  save_artifacts: true
+  artifact_dir: "./artifacts"
+
+# 工作流阶段
+stages:
+  # Stage 1: 架构设计与规划 (Claude Opus)
+  - stage_id: "planning"
+    name: "Architecture Planning"
+    model: "claude-opus-4-6"
+    description: "使用 Opus 生成详细的系统架构设计方案"
+
+    input:
+      source: "user_task"
+
+    prompt_template: |
+      你是一个资深的系统架构师。
+
+      任务描述：
+      {task_description}
+
+      请生成以下内容的详细设计方案：
+      1. 系统架构概览（模块、组件、交互）
+      2. 核心设计决策与理由
+      3. 技术栈选择
+      4. 实现步骤（分阶段）
+      5. 潜在的风险与mitigation方案
+
+      输出格式：结构化的markdown文档
+
+    output_key: "architecture_plan"
+    save_artifact: true
+
+  # Stage 2: 设计审核与迭代 (Gemini 3.1 Pro)
+  - stage_id: "design_review"
+    name: "Design Review & Discussion"
+    model: "gemini-3.1-pro-preview"
+    description: "多轮设计审核和改进讨论"
+
+    input:
+      source: "planning.architecture_plan"
+
+    prompt_template: |
+      你是一个经验丰富的技术评审专家。
+
+      请审核以下架构设计方案，提出改进建议：
+
+      {architecture_plan}
+
+      审核维度：
+      1. 架构设计的合理性和可扩展性
+      2. 技术选择是否恰当
+      3. 是否存在单点故障或性能瓶颈
+      4. 安全性和可靠性考虑
+      5. 与现有系统的集成可行性
+
+      请提供：
+      - 肯定之处
+      - 需要改进的地方（优先级标注）
+      - 具体建议
+      - 如果有问题，请追问需要澄清的地方
+
+    output_key: "design_review_feedback"
+    multi_turn: true
+    max_rounds: 3
+    termination_condition: |
+      当评审者认为设计方案已经充分完善，或者已经进行了3轮讨论后终止
+    save_artifact: true
+
+  # Stage 3: 具体编码实现 (GPT-5.2 Codex)
+  - stage_id: "coding"
+    name: "Code Implementation"
+    model: "gpt-5.2-codex"
+    description: "基于最终设计生成可运行的代码"
+
+    input:
+      source: "design_review.final_design"
+
+    prompt_template: |
+      你是一个高级的编程专家。
+
+      基于以下经过评审的系统设计，生成完整的可生产就绪的代码实现：
+
+      {final_design}
+
+      要求：
+      1. 代码应该遵循 PEP 8 风格指南（如果是 Python）
+      2. 包含完整的错误处理和日志记录
+      3. 添加类型注解和文档字符串
+      4. 模块化和可维护性优先
+      5. 考虑性能优化
+      6. 提供 Unit Test 框架
+
+      输出结构：
+      - main implementation files
+      - test files
+      - configuration files
+      - README 和使用说明
+
+    output_key: "generated_code"
+    save_artifact: true
+
+  # Stage 4: 代码审查与测试 (Gemini 3.1 Pro)
+  - stage_id: "code_review"
+    name: "Code Review & Testing"
+    model: "gemini-3.1-pro-preview"
+    description: "代码质量审查、测试覆盖验证和bug识别"
+
+    input:
+      source: "coding.generated_code"
+
+    prompt_template: |
+      你是一个资深的代码审查专家和QA工程师。
+
+      请对以下代码进行全面审查：
+
+      {generated_code}
+
+      审查清单：
+      1. 代码质量
+         - 可读性和可维护性
+         - 命名规范
+         - 复杂度分析
+         - DRY 原则
+
+      2. 功能正确性
+         - 是否实现了设计要求
+         - 边界条件处理
+         - 错误处理完整性
+
+      3. 安全性
+         - 输入验证
+         - 注入漏洞
+         - 敏感信息处理
+
+      4. 测试覆盖
+         - Happy path 覆盖度
+         - 边界情况测试
+         - 错误路径测试
+         - 建议补充的测试用例
+
+      5. 性能与资源
+         - 时间复杂度
+         - 空间复杂度
+         - 是否存在内存泄漏风险
+
+      输出格式：
+      - 发现的问题（按严重级别分类）
+      - 改进建议
+      - 建议补充的测试
+      - 整体评分和是否通过审查
+
+    output_key: "code_review_result"
+    multi_turn: false
+    save_artifact: true
+
+  # Stage 5: 最终总结与经验报告 (Claude Haiku)
+  - stage_id: "summary"
+    name: "Final Summary & Report"
+    model: "claude-haiku-4-5-20251001"
+    description: "生成整个工作流的总结和经验报告"
+
+    input:
+      - source: "planning.architecture_plan"
+        key: "initial_plan"
+      - source: "design_review.discussions"
+        key: "design_discussions"
+      - source: "design_review.rounds"
+        key: "design_review_rounds"
+      - source: "coding.generated_code"
+        key: "final_code"
+      - source: "code_review.code_review_result"
+        key: "code_review_result"
+
+    prompt_template: |
+      你是一个经验丰富的技术总结专家。
+
+      基于以下完整的开发工作流程，生成一份全面的总结报告。
+
+      ## 设计阶段信息
+      初始设计方案：
+      {initial_plan}
+
+      设计审核讨论轮数：{design_review_rounds}
+      核心讨论内容：
+      {design_discussions}
+
+      ## 实现阶段信息
+      最终生成的代码统计：
+      - 总行数
+      - 模块数量
+      - 主要实现难点
+
+      最终代码：
+      {final_code}
+
+      ## 审查阶段信息
+      代码审查结果：
+      {code_review_result}
+
+      ---
+
+      请生成一份结构化的总结报告，包括以下内容：
+
+      ### 1. 设计阶段总结
+      - 初始设计方案的关键特点
+      - 审核过程中进行了几轮讨论
+      - 主要修改点和优化方向
+      - 最终确定的架构要点
+
+      ### 2. 实现过程总结
+      - 编码阶段遇到的主要问题
+      - 如何解决的（if any）
+      - 代码质量指标（基于审查结果）
+
+      ### 3. 测试与质量保证
+      - 测试覆盖情况评估
+      - 代码审查发现的主要问题类别
+      - 未来改进建议
+
+      ### 4. 关键决策点
+      - 技术选型的合理性评估
+      - 架构设计的权衡
+
+      ### 5. 经验教训与建议
+      - 这个项目最重要的3个经验
+      - 如果重来会做哪些不同的选择
+      - 对后续类似项目的建议
+
+      ### 6. 最终评分与评论
+      - 整体项目完成度评分（1-10）
+      - 是否推荐此设计方案用于生产环境
+      - 关键后续行动项
+
+      输出为结构化 markdown 文档。
+
+    output_key: "final_summary"
+    save_artifact: true
+
+# 工作流的全局输出结构
+output_schema:
+  planning:
+    - architecture_plan: "string"
+
+  design_review:
+    - feedback_rounds: "array[string]"
+    - final_design: "string"
+    - review_count: "int"
+
+  coding:
+    - generated_code: "string"
+    - code_structure: "object"
+
+  code_review:
+    - review_comments: "array[object]"
+    - test_recommendations: "array[string]"
+    - overall_score: "float"
+    - passed: "boolean"
+
+  summary:
+    - final_summary: "string"
+    - experience_lessons: "array[string]"
+    - recommendations: "array[string]"
+
+# 执行配置
+execution:
+  parallel: false  # 严格按顺序执行
+  error_handling: "fail_fast"  # 某个阶段失败则停止
+  save_state: true  # 保存状态以便恢复
+  state_dir: "./workflow_state"
