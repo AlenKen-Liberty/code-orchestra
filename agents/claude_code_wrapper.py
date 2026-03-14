@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from typing import Iterable
 
 from config import settings
@@ -56,7 +57,9 @@ async def invoke_claude(
         return ""
 
     try:
-        parsed = json.loads(output_text)
+        match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", output_text, re.DOTALL)
+        clean_text = match.group(1) if match else output_text
+        parsed = json.loads(clean_text)
         if isinstance(parsed, dict):
             for key in ("result", "content", "response"):
                 value = parsed.get(key)

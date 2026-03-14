@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 import uuid
 
@@ -128,7 +129,7 @@ class MultiAgentOrchestrator:
         return self._extract_text(run)
 
     async def close(self) -> None:
-        await asyncio.gather(*(client.close() for client in self.clients.values()))
+        await asyncio.gather(*(client.close() for client in self.clients.values()), return_exceptions=True)
 
     async def _call_agent(
         self,
@@ -172,8 +173,10 @@ class MultiAgentOrchestrator:
 
         verdict = None
         if first_line:
+            match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", first_line, re.DOTALL)
+            clean_first = match.group(1) if match else first_line
             try:
-                parsed = json.loads(first_line)
+                parsed = json.loads(clean_first)
                 if isinstance(parsed, dict):
                     verdict_value = parsed.get("verdict")
                     if isinstance(verdict_value, str):

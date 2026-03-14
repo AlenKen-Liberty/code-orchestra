@@ -84,8 +84,15 @@ class SessionStore:
         if not self._persist_to_disk:
             return
         path = self._session_path(session.session_id)
+        tmp_path = path + ".tmp"
         try:
-            with open(path, "w", encoding="utf-8") as handle:
+            with open(tmp_path, "w", encoding="utf-8") as handle:
                 json.dump(session.to_dict(), handle, indent=2)
+            os.replace(tmp_path, path)
         except OSError as exc:
             logger.warning("Failed to persist session %s: %s", session.session_id, exc)
+            if os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass

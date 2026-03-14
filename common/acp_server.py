@@ -141,6 +141,7 @@ class ACPServer:
             run.output_messages = [output_message]
             run.status = RunStatus.COMPLETED
         except Exception as exc:  # noqa: BLE001
+            logger.exception("Agent %s handler failed for run %s", agent_name, run.run_id)
             run.status = RunStatus.FAILED
             run.error = str(exc)
         finally:

@@ -1,13 +1,23 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
+import re
 
 from config import settings
 from agents.claude_code_wrapper import CLIError
 
 logger = logging.getLogger(__name__)
+
+_CODE_BLOCK_RE = re.compile(r"```(?:\w*)\n(.*?)```", re.DOTALL)
+
+
+def _extract_response(text: str) -> str:
+    """Extract code blocks from Codex output, falling back to full text."""
+    blocks = _CODE_BLOCK_RE.findall(text)
+    if blocks:
+        return "\n\n".join(block.strip() for block in blocks)
+    return text
 
 
 async def invoke_codex(
@@ -15,7 +25,7 @@ async def invoke_codex(
     timeout: float | None = None,
     working_dir: str | None = None,
 ) -> str:
-    args = ["codex", "--quiet", "--json"]
+    args = ["codex", "exec", "-"]
 
     proc = await asyncio.create_subprocess_exec(
         *args,
@@ -43,14 +53,4 @@ async def invoke_codex(
     if not output_text:
         return ""
 
-    try:
-        parsed = json.loads(output_text)
-        if isinstance(parsed, dict):
-            for key in ("result", "content", "response"):
-                value = parsed.get(key)
-                if isinstance(value, str):
-                    return value
-            return json.dumps(parsed)
-        return json.dumps(parsed)
-    except json.JSONDecodeError:
-        return output_text
+    return _extract_response(output_text)

@@ -39,8 +39,8 @@ ORCHESTRATOR_PORT = _get_env_int("ORCHESTRATOR_PORT", 8000)
 CLAUDE_BASE_URL = _get_env("CLAUDE_BASE_URL", "http://localhost:8001")
 CODEX_BASE_URL = _get_env("CODEX_BASE_URL", "http://localhost:8002")
 
-CLI_TIMEOUT = _get_env_float("CLI_TIMEOUT", 120.0)
-HTTP_TIMEOUT = _get_env_float("HTTP_TIMEOUT", 180.0)
+CLI_TIMEOUT = _get_env_float("CLI_TIMEOUT", 300.0)
+HTTP_TIMEOUT = _get_env_float("HTTP_TIMEOUT", 350.0)
 
 MAX_REVIEW_ROUNDS = _get_env_int("MAX_REVIEW_ROUNDS", 3)
 MAX_RETRIES = _get_env_int("MAX_RETRIES", 2)
@@ -51,8 +51,8 @@ LOG_LEVEL = _get_env("LOG_LEVEL", "INFO")
 SESSION_PERSIST_TO_DISK = _get_env_bool("SESSION_PERSIST_TO_DISK", False)
 SESSION_DATA_DIR = _get_env("SESSION_DATA_DIR", "./data/sessions")
 
-CLAUDE_PLANNER_MODEL = _get_env("CLAUDE_PLANNER_MODEL", "opus4.6")
-CLAUDE_REVIEWER_MODEL = _get_env("CLAUDE_REVIEWER_MODEL", "haiku4.5")
+CLAUDE_PLANNER_MODEL = _get_env("CLAUDE_PLANNER_MODEL", "claude-opus-4-6")
+CLAUDE_REVIEWER_MODEL = _get_env("CLAUDE_REVIEWER_MODEL", "claude-haiku-4-5")
 
 CODEX_MODEL = _get_env("CODEX_MODEL", "gpt-5.2-codex")
 CODEX_TIER = _get_env("CODEX_TIER", "xhigh")
