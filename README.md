@@ -4,25 +4,32 @@ This project implements a multi-stage LLM orchestration pipeline, where differen
 
 ## Quick Overview
 
-The pipeline supports chaining multiple CLI-based LLM agents:
-- **Claude Code** (e.g., `claude` CLI for Opus, Haiku)
-- **Codex** (e.g., `codex` CLI for GPT-5.2-Codex)
-- **Gemini** (e.g., `geminicli` for Gemini 3.1 Pro Preview)
+The pipeline supports chaining multiple LLM agents over the ACP protocol:
+- **Claude Planner & Reviewer**
+- **Codex Coder**
+- **Gemini Reviewer**
 
 Each stage passes its output sequentially to the next model based on a configurable YAML workflow. 
 
-## Quick Start
-
-Run the current 3-stage pipeline (Opus Design → Codex Implement → Haiku Review):
-
+Start the agent HTTP servers in the background:
 ```bash
-python3 scripts/run_pipeline.py \
-  --pipeline workflows/current_pipeline.yaml \
-  --task "Build a Python script that scrapes a website and saves data to CSV" \
-  --output results.json
+PYTHONPATH=. venv/bin/python scripts/run_claude_server.py &
+PYTHONPATH=. venv/bin/python scripts/run_codex_server.py &
+PYTHONPATH=. venv/bin/python scripts/run_gemini_server.py &
 ```
 
-All intermediate artifacts are automatically saved to `./artifacts/`.
+Then run the interactive pipeline orchestrator:
+
+```bash
+PYTHONPATH=. venv/bin/python scripts/orchestra_cli.py
+```
+
+You can optionally run it headless with flags:
+```bash
+PYTHONPATH=. venv/bin/python scripts/orchestra_cli.py --workflow workflows/multi_llm_pipeline.yaml --task "Build a Python script that scrapes a website and saves data to CSV"
+```
+
+All intermediate artifacts and code steps are processed automatically by the agents.
 
 ## Documentation
 

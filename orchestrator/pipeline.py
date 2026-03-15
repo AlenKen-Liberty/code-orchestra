@@ -10,9 +10,6 @@ from typing import Any, Optional
 
 import yaml
 
-from agents.claude_code_wrapper import invoke_claude, CLIError as CLIError_Claude
-from agents.codex_wrapper import invoke_codex, CLIError as CLIError_Codex
-from agents.gemini_wrapper import invoke_gemini, CLIError as CLIError_Gemini
 from orchestrator.stage import StageDefinition, StageResult, ModelType
 
 logger = logging.getLogger(__name__)
@@ -211,23 +208,8 @@ class PipelineExecutor:
             return str(self.state.get(source, ""))
 
     async def _invoke_model(self, stage_def: StageDefinition, prompt: str) -> str:
-        """Invoke the appropriate model based on stage definition."""
-        timeout = self.pipeline.config.get("timeout_per_stage", 300)
-
-        if stage_def.model_type == ModelType.CLAUDE_CODE:
-            output = await invoke_claude(prompt, stage_def.model, timeout=timeout)
-            return output
-
-        elif stage_def.model_type == ModelType.CODEX:
-            output = await invoke_codex(prompt, timeout=timeout)
-            return output
-
-        elif stage_def.model_type == ModelType.GEMINI:
-            output = await invoke_gemini(prompt, stage_def.model, timeout=timeout)
-            return output
-
-        else:
-            raise PipelineError(f"Unsupported model type: {stage_def.model_type}")
+        """Invoke the appropriate model based on stage definition (override in CLI)."""
+        raise NotImplementedError("Model invocation must be handled by the executor subclass (e.g. CLIExecutor)")
 
     def _save_artifact(self, stage_id: str, result: StageResult) -> None:
         """Save stage output as artifact."""

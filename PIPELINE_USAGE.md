@@ -2,10 +2,10 @@
 
 ## Overview
 
-This system allows you to orchestrate multi-stage workflows using different LLM models:
-- **Claude Code** (Opus, Haiku) - via `claude` CLI
-- **Codex** (GPT-5.2-Codex) - via `codex` CLI
-- **Gemini** (3.1 Pro Preview) - via `geminicli` CLI
+This system allows you to orchestrate multi-stage workflows using different LLM models via the ACP Protocol:
+- **Claude planner** (8001)
+- **Codex coder** (8002)
+- **Gemini reviewer** (8003)
 
 ## Current Supported Pipelines
 
@@ -16,11 +16,16 @@ Three-stage pipeline:
 2. **Coding** (GPT-5.2 Codex) - Implement the design
 3. **Review** (Claude Haiku) - Review code quality and test coverage
 
+Make sure the required servers are running, then launch the interactive CLI:
+
 ```bash
-python3 scripts/run_pipeline.py \
-  --pipeline workflows/current_pipeline.yaml \
-  --task "Build a RESTful API for a task management system" \
-  --output results.json
+PYTHONPATH=. venv/bin/python scripts/orchestra_cli.py
+```
+Or run a headless session:
+```bash
+PYTHONPATH=. venv/bin/python scripts/orchestra_cli.py \
+  --workflow workflows/current_pipeline.yaml \
+  --task "Build a RESTful API for a task management system"
 ```
 
 ### 2. `multi_llm_pipeline.yaml` (Future)
@@ -34,21 +39,18 @@ Five-stage pipeline (when Gemini integration is complete):
 
 ## Requirements
 
-### Installed CLIs
-
-Make sure you have these CLIs available in PATH:
+Make sure you have the respective ACP servers running before starting a workflow:
 
 ```bash
-# Check if available
-which claude    # Claude Code CLI
-which codex     # Codex CLI
-which geminicli # Gemini CLI (for future use)
+PYTHONPATH=. venv/bin/python scripts/run_claude_server.py &
+PYTHONPATH=. venv/bin/python scripts/run_codex_server.py &
+PYTHONPATH=. venv/bin/python scripts/run_gemini_server.py &
 ```
 
 ### Python Dependencies
 
 ```bash
-pip install PyYAML  # Required for YAML parsing
+pip install PyYAML aiohttp  # Required for YAML parsing and async HTTP requests
 ```
 
 ## Output Format
@@ -91,8 +93,9 @@ The pipeline generates JSON output with results from each stage:
 Each stage has:
 - `stage_id` - Unique identifier
 - `name` - Display name
-- `model` - Model name to use
-- `model_type` - Type: `claude_code`, `codex`, or `gemini`
+- `model` - Display model name string
+- `model_type` - Type string (`claude_code`, `codex`, `gemini`)
+- `metadata.agent` - Key of the agent defined in `config/agents.yaml` that handles the request
 - `description` - What the stage does
 - `prompt_template` - Prompt with variables like `{variable_name}`
 - `output_key` - Key name for the output
@@ -129,11 +132,9 @@ stages:
 
 ### Adding a New Model Type
 
-1. Create a wrapper in `agents/` (e.g., `new_model_wrapper.py`)
-2. Implement `async def invoke_new_model(prompt, model, timeout, working_dir) -> str`
-3. Add import to `orchestrator/pipeline.py`
-4. Update `_invoke_model()` method to handle new type
-5. Add new enum value to `ModelType` in `orchestrator/stage.py`
+1. Configure a new agent endpoint in `config/agents.yaml`
+2. Start the respective ACP server process to listen on that endpoint
+3. Add the `metadata.agent` key to your YAML step to map to the new agent service
 
 ## Environment Variables
 
@@ -152,17 +153,18 @@ export ARTIFACTS_DIR=./artifacts
 
 ## Troubleshooting
 
-### "Claude CLI not found"
+### "SOME SERVERS ARE UNREACHABLE!"
 ```bash
-# Install Claude Code
-pip install anthropic-claude-code
-# Or ensure `claude` is in PATH
+# Ensure you have started all servers first.
+PYTHONPATH=. venv/bin/python scripts/run_claude_server.py &
+PYTHONPATH=. venv/bin/python scripts/run_codex_server.py &
+PYTHONPATH=. venv/bin/python scripts/run_gemini_server.py &
 ```
 
-### "codex CLI not found"
+### "Address already in use"
 ```bash
-# Ensure Codex CLI is installed and in PATH
-which codex
+# The server port is already bound, kill processes on 8001, 8002, or 8003
+lsof -ti :8001 | xargs kill -9
 ```
 
 ### PyYAML not found
@@ -171,15 +173,15 @@ pip install PyYAML
 ```
 
 ### Stage timed out
-- Increase `CLI_TIMEOUT` environment variable
-- Check if the model CLI is responsive
-- Verify the prompt is reasonable in complexity
+- Ensure your background ACP servers didn't crash
+- Verify the task description isn't too huge
+- Check if the upstream LLM API provider itself is down
 
 ## Development
 
 ### Running with verbose output
 ```bash
-python3 scripts/run_pipeline.py \
+PYTHONPATH=. venv/bin/python scripts/run_pipeline.py \
   --pipeline workflows/current_pipeline.yaml \
   --task "Your task" \
   --verbose

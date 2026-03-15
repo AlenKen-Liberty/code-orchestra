@@ -9,7 +9,8 @@ import logging
 import sys
 from pathlib import Path
 
-from orchestrator.pipeline import PipelineDefinition, PipelineExecutor, PipelineError
+from orchestrator.pipeline import PipelineDefinition, PipelineError
+from scripts.orchestra_cli import CLIExecutor
 
 # Setup logging
 logging.basicConfig(
@@ -39,6 +40,11 @@ def main() -> None:
         help="Output file for results (default: stdout)",
     )
     parser.add_argument(
+        "--config",
+        default="config/agents.yaml",
+        help="Path to agents.yaml",
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
         help="Enable verbose logging",
@@ -58,7 +64,7 @@ def main() -> None:
         sys.exit(1)
 
     # Create executor and run
-    executor = PipelineExecutor(pipeline_def)
+    executor = CLIExecutor(pipeline_def, args.config)
 
     try:
         results = asyncio.run(executor.execute(args.task))
@@ -88,6 +94,8 @@ def main() -> None:
             import traceback
             traceback.print_exc()
         sys.exit(1)
+    finally:
+        asyncio.run(executor.cleanup())
 
 
 if __name__ == "__main__":

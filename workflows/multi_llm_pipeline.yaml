@@ -14,10 +14,14 @@ stages:
   - stage_id: "planning"
     name: "Architecture Planning"
     model: "claude-opus-4-6"
+    model_type: "claude_code"
+    metadata:
+      agent: "claude_planner"
     description: "使用 Opus 生成详细的系统架构设计方案"
 
     input:
-      source: "user_task"
+      - source: "user_task"
+        key: "task_description"
 
     prompt_template: |
       你是一个资深的系统架构师。
@@ -41,6 +45,9 @@ stages:
   - stage_id: "design_review"
     name: "Design Review & Discussion"
     model: "gemini-3.1-pro-preview"
+    model_type: "gemini"
+    metadata:
+      agent: "gemini_reviewer"
     description: "多轮设计审核和改进讨论"
 
     input:
@@ -77,6 +84,9 @@ stages:
   - stage_id: "coding"
     name: "Code Implementation"
     model: "gpt-5.2-codex"
+    model_type: "codex"
+    metadata:
+      agent: "codex_coder"
     description: "基于最终设计生成可运行的代码"
 
     input:
@@ -110,6 +120,9 @@ stages:
   - stage_id: "code_review"
     name: "Code Review & Testing"
     model: "gemini-3.1-pro-preview"
+    model_type: "gemini"
+    metadata:
+      agent: "gemini_reviewer"
     description: "代码质量审查、测试覆盖验证和bug识别"
 
     input:
@@ -164,6 +177,9 @@ stages:
   - stage_id: "summary"
     name: "Final Summary & Report"
     model: "claude-haiku-4-5-20251001"
+    model_type: "claude_code"
+    metadata:
+      agent: "claude_reviewer"
     description: "生成整个工作流的总结和经验报告"
 
     input:
