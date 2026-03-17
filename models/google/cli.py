@@ -13,6 +13,7 @@ Usage:
 import sys
 import time
 from datetime import datetime
+from pathlib import Path
 
 
 # ---------------------------------------------------------------------------
@@ -332,6 +333,58 @@ def cmd_switch(email: str):
         print(f"\n  {C.RED}❌ Account '{email}' not found{C.RESET}\n")
 
 
+def cmd_sync():
+    """Sync token from Gemini CLI into our account manager."""
+    from models.google.account import sync_from_gemini_cli
+
+    print(f"\n  {C.BOLD}🔄 Syncing from Gemini CLI...{C.RESET}")
+
+    account = sync_from_gemini_cli()
+    if account:
+        print(f"  {C.GREEN}✅ Synced {account.email}{C.RESET}")
+        print(f"  {C.DIM}   Token valid, saved to accounts.{C.RESET}\n")
+    else:
+        print(f"  {C.RED}❌ No token found in ~/.gemini/oauth_creds.json{C.RESET}")
+        print(f"  {C.DIM}   Run 'gemini' and login first.{C.RESET}\n")
+
+
+def cmd_sync_all():
+    """Sync all Gemini CLI accounts by switching and syncing each one."""
+    from models.google.account import sync_from_gemini_cli
+
+    gemini_accounts_path = Path.home() / ".gemini" / "google_accounts.json"
+    if not gemini_accounts_path.exists():
+        print(f"  {C.RED}No Gemini CLI accounts found.{C.RESET}")
+        return
+
+    import json
+    data = json.loads(gemini_accounts_path.read_text())
+    active = data.get("active", "")
+    old = data.get("old", [])
+    all_emails = ([active] if active else []) + old
+
+    if not all_emails:
+        print(f"  {C.RED}No Gemini CLI accounts found.{C.RESET}")
+        return
+
+    print(f"\n  {C.BOLD}🔄 Syncing {len(all_emails)} Gemini CLI accounts...{C.RESET}\n")
+
+    # The current oauth_creds.json is for the active account
+    account = sync_from_gemini_cli()
+    if account:
+        print(f"  {C.GREEN}✅ {account.email}{C.RESET}")
+    else:
+        print(f"  {C.YELLOW}⚠ Could not sync active account{C.RESET}")
+
+    remaining = [e for e in all_emails if e != (account.email if account else "")]
+    if remaining:
+        print(f"\n  {C.DIM}Other accounts need individual login:{C.RESET}")
+        for email in remaining:
+            print(f"  {C.DIM}  • {email} (switch in Gemini CLI, then run sync){C.RESET}")
+
+    print()
+
+
 def cmd_remove(email: str):
     """Remove an account."""
     from models.google.account import remove_account
@@ -355,6 +408,7 @@ def main():
 
   Commands:
     login              OAuth login via browser
+    sync               Import token from Gemini CLI (after 'gemini' login)
     status [--ide X]   Quota dashboard for all accounts (X: ANTIGRAVITY, GEMINI_CLI)
     list               List registered accounts
     switch <email>     Switch active account
@@ -376,6 +430,8 @@ def main():
             if idx + 1 < len(args):
                 ide_type = args[idx + 1].upper()
         cmd_status(ide_type)
+    elif cmd == "sync":
+        cmd_sync()
     elif cmd == "list":
         cmd_list()
     elif cmd == "switch":

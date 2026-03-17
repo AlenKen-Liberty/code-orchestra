@@ -32,6 +32,10 @@ import base64
 CLIENT_ID = "moc.tnetnocresuelgoog.sppa.pe304g4hjolotv532erc12h2nisshmt-1950606001701"[::-1]
 CLIENT_SECRET = "fADq6z4CXs8BLm1JLdL684RWF85K-XPSCOG"[::-1]
 
+# Gemini CLI's OAuth client (for refreshing tokens obtained via `gemini` CLI login)
+GEMINI_CLI_CLIENT_ID = "moc.tnetnocresuelgoog.sppa.j531bidmh3va6fqa3e9pnrdrpo2tf8oo-593908552186"[::-1]
+GEMINI_CLI_CLIENT_SECRET = "lxsFXlc5uC6Veg-kS7o1-mPMgHu4-XPSCOG"[::-1]
+
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 USERINFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo"
@@ -231,14 +235,30 @@ def exchange_code(code: str, redirect_uri: str) -> TokenData:
 
 
 def refresh_access_token(refresh_token: str) -> TokenData:
-    """Refresh access token using refresh_token."""
-    resp = _post_form(TOKEN_URL, {
-        "client_id": CLIENT_ID,
-        "client_secret": CLIENT_SECRET,
-        "refresh_token": refresh_token,
-        "grant_type": "refresh_token",
-    })
-    return TokenData.from_token_response(resp, old_refresh=refresh_token)
+    """Refresh access token using refresh_token.
+
+    Tries Antigravity Manager credentials first, then Gemini CLI credentials.
+    This allows tokens obtained via either login flow to be refreshed.
+    """
+    # Try each client credential pair
+    clients = [
+        (CLIENT_ID, CLIENT_SECRET),
+        (GEMINI_CLI_CLIENT_ID, GEMINI_CLI_CLIENT_SECRET),
+    ]
+    last_error = None
+    for client_id, client_secret in clients:
+        try:
+            resp = _post_form(TOKEN_URL, {
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "refresh_token": refresh_token,
+                "grant_type": "refresh_token",
+            })
+            return TokenData.from_token_response(resp, old_refresh=refresh_token)
+        except Exception as e:
+            last_error = e
+            continue
+    raise last_error  # type: ignore[misc]
 
 
 def ensure_fresh_token(token: TokenData) -> TokenData:

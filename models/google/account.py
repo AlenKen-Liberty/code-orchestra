@@ -360,6 +360,72 @@ def remove_account(email: str) -> bool:
 # Backward-compatible classes for manager.py
 # ---------------------------------------------------------------------------
 
+def sync_from_gemini_cli() -> Optional[Account]:
+    """
+    Import the current Gemini CLI token into our account manager.
+
+    Reads ~/.gemini/oauth_creds.json (Gemini CLI's token store),
+    determines the email, and updates/creates the corresponding account.
+
+    Returns the synced Account, or None on failure.
+    """
+    creds_path = Path.home() / ".gemini" / "oauth_creds.json"
+    if not creds_path.exists():
+        return None
+
+    try:
+        data = json.loads(creds_path.read_text())
+    except Exception:
+        return None
+
+    access_token = data.get("access_token", "")
+    refresh_token = data.get("refresh_token", "")
+    if not access_token:
+        return None
+
+    # Determine email from id_token JWT or by calling userinfo API
+    email = None
+    id_token_str = data.get("id_token", "")
+    if id_token_str:
+        try:
+            import base64
+            payload = id_token_str.split(".")[1]
+            payload += "=" * (4 - len(payload) % 4)
+            claims = json.loads(base64.urlsafe_b64decode(payload))
+            email = claims.get("email")
+        except Exception:
+            pass
+
+    if not email:
+        # Fallback: call userinfo API
+        try:
+            from models.google.oauth import get_user_info
+            info = get_user_info(access_token)
+            email = info.get("email")
+        except Exception:
+            return None
+
+    if not email:
+        return None
+
+    # Build TokenData
+    expiry_ms = data.get("expiry_date", 0)
+    expiry_ts = int(expiry_ms / 1000) if expiry_ms > 1e12 else int(expiry_ms)
+    expires_in = max(0, expiry_ts - int(time.time()))
+
+    token = TokenData(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        expires_in=expires_in,
+        expiry_timestamp=expiry_ts,
+        email=email,
+    )
+
+    # Add/update the account
+    account = add_account(email, token)
+    return account
+
+
 class QuotaTracker:
     """
     Tracks per-account rate limit state (429 errors).
