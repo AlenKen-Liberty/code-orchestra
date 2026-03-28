@@ -1,0 +1,92 @@
+models:
+  claude-opus-4-6:
+    provider: claude
+    chat2api_id: copilot-claude-opus
+    cli_model_id: opus
+    aliases: [copilot-claude-opus, opus, claude-opus]
+    accounts: 1
+    cost: high
+    strengths: "Complex design, deep debugging, and E2E investigation"
+
+  claude-sonnet-4-6:
+    provider: claude
+    chat2api_id: copilot-claude
+    cli_model_id: sonnet
+    aliases: [sonnet, claude-sonnet]
+    accounts: 1
+    cost: medium
+    strengths: "Mid-complexity implementation and review"
+
+  claude-haiku-4-5:
+    provider: claude
+    chat2api_id: copilot-claude
+    cli_model_id: haiku
+    aliases: [haiku, claude-haiku]
+    accounts: 1
+    cost: low
+    strengths: "Fast routing and lightweight review"
+
+  gpt-5.4-codex:
+    provider: codex
+    chat2api_id: codex
+    # codex CLI uses its default model; no --model flag needed
+    aliases: [codex, gpt-5.4, codex-balanced]
+    accounts: 5
+    tier: xhigh
+    cost: medium
+    strengths: "Primary coding model"
+
+  gemini-3.1-pro:
+    provider: google
+    chat2api_id: gemini-pro
+    cli_model_id: gemini-3.1-pro-preview
+    aliases: [gemini-pro, gemini-3.1-pro-preview, gemini]
+    accounts: 4
+    cost: low
+    strengths: "Requirement intake, review, and test generation"
+
+  gpt-4o:
+    provider: github
+    chat2api_id: copilot-gpt4o
+    aliases: [copilot-gpt4o, gpt4o]
+    accounts: 1
+    cost: free
+    strengths: "GitHub-oriented repetitive operations"
+
+roles:
+  intake:
+    - gemini-3.1-pro
+    - gpt-5.4-codex
+
+  planner:
+    - gpt-5.4-codex
+    - claude-opus-4-6
+
+  coder:
+    - gemini-3.1-pro
+    - gpt-5.4-codex
+
+  reviewer:
+    - gemini-3.1-pro
+    - gpt-5.4-codex
+    - claude-haiku-4-5
+
+  tester:
+    - gemini-3.1-pro
+    - gpt-5.4-codex
+
+  e2e_tester:
+    - claude-opus-4-6
+    - gpt-5.4-codex
+
+  debugger:
+    - claude-opus-4-6
+    - gpt-5.4-codex
+
+  github_ops:
+    - gpt-4o
+    - claude-haiku-4-5
+
+  summarizer:
+    - claude-haiku-4-5
+    - gemini-3.1-pro

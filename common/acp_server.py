@@ -4,9 +4,12 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass
-from typing import Awaitable, Callable
+from typing import Any, Awaitable, Callable
 
-from aiohttp import web
+try:
+    from aiohttp import web
+except ModuleNotFoundError:  # pragma: no cover - exercised in import-only environments
+    web = None
 
 from common.models import AgentManifest, Message, MessagePart, Run, RunStatus, Session
 from common.session_store import SessionStore
@@ -46,13 +49,15 @@ class ACPServer:
         persist_to_disk: bool | None = None,
         data_dir: str | None = None,
     ) -> None:
+        if web is None:
+            raise RuntimeError("aiohttp is required to run ACPServer. Install it before starting server components.")
         self._host = host
         self._port = port
         self._runs: dict[str, Run] = {}
         self._agents: dict[str, AgentRegistration] = {}
-        self._app = web.Application()
-        self._runner: web.AppRunner | None = None
-        self._site: web.TCPSite | None = None
+        self._app: Any = web.Application()
+        self._runner: Any = None
+        self._site: Any = None
 
         persist = settings.SESSION_PERSIST_TO_DISK if persist_to_disk is None else persist_to_disk
         data_path = settings.SESSION_DATA_DIR if data_dir is None else data_dir
