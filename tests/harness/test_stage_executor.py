@@ -220,3 +220,105 @@ def test_gemini_command_flag_order(tmp_path) -> None:
     y_idx = cmd.index("-y")
     p_idx = cmd.index("-p")
     assert y_idx < p_idx, f"-y (idx={y_idx}) must come before -p (idx={p_idx})"
+
+
+def test_prompt_over_max_arg_len_written_to_file(tmp_path, monkeypatch) -> None:
+    from config import settings
+    monkeypatch.setattr(settings, "PROMPT_MAX_ARG_LEN", 100)
+    monkeypatch.setattr(settings, "HARNESS_ARTIFACT_DIR", str(tmp_path / "artifacts"))
+    
+    handoff = tmp_path / "handoff.md"
+    long_prompt = "A" * 200
+    handoff.write_text(long_prompt, encoding="utf-8")
+
+    async def codex_runner(command, cwd, **kwargs):
+        return CommandExecution(
+            returncode=0,
+            stdout='{"output_text":"ok"}',
+            stderr="",
+        )
+
+    executor = StageExecutor(
+        permission_gate=DummyPermissionGate(
+            PermissionDecision(risk_level=RiskLevel.SAFE, decision="auto_approved", reason="ok")
+        ),
+        runner=codex_runner,
+    )
+
+    stage = make_stage("codex")
+    result = asyncio.run(executor.execute(stage, str(handoff), str(tmp_path)))
+
+    assert result.status == StageStatus.DONE
+    artifacts_dir = tmp_path / "artifacts" / stage.task_id
+    prompt_file = artifacts_dir / f"{stage.stage_id}_prompt.txt"
+    assert prompt_file.exists()
+    assert prompt_file.read_text(encoding="utf-8") == long_prompt
+
+
+def test_provider_command_lists_no_raw_prompt_text_when_large(tmp_path, monkeypatch) -> None:
+    from config import settings
+    monkeypatch.setattr(settings, "PROMPT_MAX_ARG_LEN", 100)
+    monkeypatch.setattr(settings, "HARNESS_ARTIFACT_DIR", str(tmp_path / "artifacts"))
+    
+    long_prompt = "A" * 200
+    handoff = tmp_path / "handoff.md"
+    handoff.write_text(long_prompt, encoding="utf-8")
+    
+    executed_commands = []
+    
+    async def recording_runner(command, cwd, **kwargs):
+        executed_commands.append(command)
+        return CommandExecution(returncode=0, stdout='{"output_text":"ok"}', stderr="")
+
+    executor = StageExecutor(
+        permission_gate=DummyPermissionGate(
+            PermissionDecision(risk_level=RiskLevel.SAFE, decision="auto_approved", reason="ok")
+        ),
+        runner=recording_runner,
+    )
+
+    # Test Codex
+    stage = make_stage("codex")
+    asyncio.run(executor.execute(stage, str(handoff), str(tmp_path)))
+    assert long_prompt not in executed_commands[-1]
+    
+    # Test Claude
+    stage.assigned_provider = "claude"
+    asyncio.run(executor.execute(stage, str(handoff), str(tmp_path)))
+    assert long_prompt not in executed_commands[-1]
+    
+    # Test Gemini
+    stage.assigned_provider = "google"
+    asyncio.run(executor.execute(stage, str(handoff), str(tmp_path)))
+    assert long_prompt not in executed_commands[-1]
+    # Check that Gemini got the file path reference
+    prompt_file = tmp_path / "artifacts" / stage.task_id / f"{stage.stage_id}_prompt.txt"
+    assert any(str(prompt_file) in arg for arg in executed_commands[-1])
+
+
+def test_codex_always_has_full_auto_flag(tmp_path, monkeypatch) -> None:
+    """Codex --full-auto flag must be present regardless of prompt size."""
+    from config import settings
+    monkeypatch.setattr(settings, "PROMPT_MAX_ARG_LEN", 10)
+    monkeypatch.setattr(settings, "HARNESS_ARTIFACT_DIR", str(tmp_path / "artifacts"))
+
+    handoff = tmp_path / "handoff.md"
+    handoff.write_text("A" * 100, encoding="utf-8")
+
+    executed_commands = []
+
+    async def recording_runner(command, cwd, **kwargs):
+        executed_commands.append(command)
+        return CommandExecution(returncode=0, stdout='{"output_text":"ok"}', stderr="")
+
+    executor = StageExecutor(
+        permission_gate=DummyPermissionGate(
+            PermissionDecision(risk_level=RiskLevel.SAFE, decision="auto_approved", reason="ok")
+        ),
+        runner=recording_runner,
+    )
+
+    stage = make_stage("codex")
+    asyncio.run(executor.execute(stage, str(handoff), str(tmp_path)))
+    assert "--full-auto" in executed_commands[-1], f"Missing --full-auto in: {executed_commands[-1]}"
+

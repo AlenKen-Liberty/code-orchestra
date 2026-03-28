@@ -45,6 +45,20 @@ class Chat2APIClient:
         )
         return payload["choices"][0]["message"]["content"]
 
+    def acquire_account(self, provider: str, model: str) -> dict[str, Any]:
+        """Request the best available account for a given provider and model."""
+        return self._post_json(
+            "/v1/admin/acquire-account",
+            {"provider": provider, "model": model},
+        )
+
+    def report_exhaustion(self, provider: str, email: str, model_tier: Optional[str] = None) -> dict[str, Any]:
+        """Report that an account has hit a quota limit."""
+        return self._post_json(
+            "/v1/admin/report-exhaustion",
+            {"provider": provider, "email": email, "model_tier": model_tier},
+        )
+
     def _get_json(self, path: str) -> dict[str, Any]:
         req = request.Request(f"{self.base_url}{path}", method="GET")
         with request.urlopen(req, timeout=self.timeout) as response:

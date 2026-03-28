@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable
 
-from harness.models import StageExecutionResult, StageRecord, TaskRecord
+from harness.models import StageCheckpoint, StageExecutionResult, StageRecord, TaskRecord
 
 
 class HandoffProtocol:
@@ -30,6 +30,8 @@ class HandoffProtocol:
         task: TaskRecord,
         stage: StageRecord,
         previous_stages: Iterable[StageRecord],
+        *,
+        checkpoint: StageCheckpoint | None = None,
     ) -> str:
         previous = list(previous_stages)
         previous_stage_name = previous[-1].stage_type if previous else "bootstrap"
@@ -56,6 +58,9 @@ class HandoffProtocol:
                 "",
             ]
         )
+
+        if checkpoint and (checkpoint.git_diff or checkpoint.partial_output or checkpoint.files_modified):
+            lines.extend(self._format_checkpoint_section(checkpoint, stage))
 
         if previous:
             lines.append("## Previous Stage Output")
@@ -85,13 +90,61 @@ class HandoffProtocol:
 
         return "\n".join(lines).rstrip() + "\n"
 
+    def _format_checkpoint_section(
+        self, checkpoint: StageCheckpoint, stage: StageRecord
+    ) -> list[str]:
+        lines = [
+            "## ⚠ Resuming from checkpoint (previous attempt interrupted)",
+            f"- Previous model: {checkpoint.model_used}",
+            f"- Retry count: {checkpoint.retry_count}",
+            f"- Paused reason: {checkpoint.paused_reason}",
+            "",
+            "**IMPORTANT: A previous attempt already made partial progress.**",
+            "**Review the diff below and CONTINUE from where it left off.**",
+            "**Do NOT redo work that is already done.**",
+            "",
+        ]
+        if checkpoint.files_modified:
+            lines.append("### Files already modified")
+            for f in checkpoint.files_modified:
+                lines.append(f"- `{f}`")
+            lines.append("")
+        if checkpoint.git_diff:
+            lines.append("### Changes already applied (git diff)")
+            lines.append("```diff")
+            # Cap diff in handoff to keep it readable
+            diff_text = checkpoint.git_diff
+            if len(diff_text) > 15000:
+                diff_text = diff_text[:15000] + "\n... (truncated, run `git diff` for full output)"
+            lines.append(diff_text.rstrip())
+            lines.append("```")
+            lines.append("")
+        if checkpoint.git_status:
+            lines.append("### Working tree status")
+            lines.append("```")
+            lines.append(checkpoint.git_status.rstrip())
+            lines.append("```")
+            lines.append("")
+        if checkpoint.partial_output:
+            lines.append("### Partial output from previous attempt")
+            partial = checkpoint.partial_output
+            if len(partial) > 5000:
+                partial = partial[:5000] + "\n... (truncated)"
+            lines.append("```")
+            lines.append(partial.rstrip())
+            lines.append("```")
+            lines.append("")
+        return lines
+
     def write_handoff(
         self,
         task: TaskRecord,
         stage: StageRecord,
         previous_stages: Iterable[StageRecord],
+        *,
+        checkpoint: StageCheckpoint | None = None,
     ) -> Path:
-        content = self.generate(task, stage, previous_stages)
+        content = self.generate(task, stage, previous_stages, checkpoint=checkpoint)
         path = self.handoff_path(task, stage)
         path.write_text(content, encoding="utf-8")
         return path

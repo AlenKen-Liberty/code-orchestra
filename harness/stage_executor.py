@@ -67,6 +67,10 @@ class StageExecutor:
         self.permission_gate = permission_gate or PermissionGate()
         self.runner = runner or self._run_command
         self.codex_tier = codex_tier
+        self.active_pids: dict[str, int] = {}
+
+    def get_pid(self, stage_id: str) -> int | None:
+        return self.active_pids.get(stage_id)
 
     async def execute(self, stage: StageRecord, handoff_doc_path: str, working_dir: str | None) -> StageExecutionResult:
         started_at = time.time()
@@ -92,12 +96,25 @@ class StageExecutor:
         if provider == "github":
             return await self._run_github_ops(stage, prompt, cwd, started_at)
 
-        command = self.build_command(stage, prompt, cwd)
+        prompt_arg = prompt
+        use_temp_file = len(prompt) > settings.PROMPT_MAX_ARG_LEN
+        
+        if use_temp_file:
+            artifacts_dir = Path(settings.HARNESS_ARTIFACT_DIR) / stage.task_id
+            artifacts_dir.mkdir(parents=True, exist_ok=True)
+            prompt_file = artifacts_dir / f"{stage.stage_id}_prompt.txt"
+            prompt_file.write_text(prompt, encoding="utf-8")
+            prompt_file_path = str(prompt_file.absolute())
+            if provider == "google":
+                prompt_arg = f"Read and execute the task in {prompt_file_path}"
+
+        command = self.build_command(stage, prompt_arg, cwd, use_stdin=use_temp_file)
         completed = await self._run_checked_command(
             command,
             cwd,
             context=f"stage={stage.stage_type} role={stage.model_role}",
             stdin_text=prompt,
+            stage_id=stage.stage_id,
         )
         combined_output = completed.stdout.strip() or completed.stderr.strip()
 
@@ -119,8 +136,8 @@ class StageExecutor:
             token_used=self._extract_token_usage(completed.stdout, stage.assigned_provider),
         )
 
-    def build_command(self, stage: StageRecord, prompt: str, working_dir: str) -> list[str]:
-        """Build CLI command. Prompt is passed via stdin, not as an argument."""
+    def build_command(self, stage: StageRecord, prompt: str, working_dir: str, use_stdin: bool = False) -> list[str]:
+        """Build CLI command. Prompt is passed via stdin or temp file when appropriate."""
         provider = stage.assigned_provider or self._infer_provider(stage.assigned_model or "")
         model = stage.assigned_model or ""
         cli_model = self.registry.cli_model_id(model)
@@ -138,15 +155,17 @@ class StageExecutor:
                 "Edit,Read,Bash,Grep,Glob,Write",
             ]
         if provider == "codex":
-            return [
+            cmd = [
                 "codex",
                 "exec",
                 "--json",
                 "-C",
                 working_dir,
                 "--full-auto",
-                prompt,
             ]
+            if not use_stdin:
+                cmd.append(prompt)
+            return cmd
         if provider == "google":
             return [
                 "gemini",
@@ -156,7 +175,6 @@ class StageExecutor:
                 "-p",
                 prompt,
             ]
-        # NOTE: claude uses stdin for prompt (no positional arg); codex/gemini use positional.
         raise StageExecutionError(f"Unsupported provider for CLI execution: {provider}")
 
     async def run_verify_cmd(self, verify_cmd: str, working_dir: str | None) -> CommandExecution:
@@ -225,6 +243,7 @@ class StageExecutor:
         context: str,
         display_command: Optional[str] = None,
         stdin_text: Optional[str] = None,
+        stage_id: Optional[str] = None,
     ) -> CommandExecution:
         command_text = display_command or self._display_command(command)
         decision = await self.permission_gate.decide(
@@ -234,9 +253,13 @@ class StageExecutor:
         )
         if decision.decision not in self.APPROVED_DECISIONS:
             raise PermissionBlockedError(command_text, decision)
+        
+        # pass stage_id to runner if it's the internal one, otherwise just call runner
+        if self.runner == self._run_command:
+            return await self.runner(command, cwd, stdin_text=stdin_text, stage_id=stage_id)
         return await self.runner(command, cwd, stdin_text=stdin_text)
 
-    async def _run_command(self, command: list[str], cwd: str, *, stdin_text: Optional[str] = None) -> CommandExecution:
+    async def _run_command(self, command: list[str], cwd: str, *, stdin_text: Optional[str] = None, stage_id: Optional[str] = None) -> CommandExecution:
         process = await asyncio.create_subprocess_exec(
             *command,
             cwd=cwd,
@@ -244,8 +267,16 @@ class StageExecutor:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdin_bytes = stdin_text.encode("utf-8") if stdin_text else None
-        stdout, stderr = await process.communicate(input=stdin_bytes)
+        if stage_id:
+            self.active_pids[stage_id] = process.pid
+            
+        try:
+            stdin_bytes = stdin_text.encode("utf-8") if stdin_text else None
+            stdout, stderr = await process.communicate(input=stdin_bytes)
+        finally:
+            if stage_id:
+                self.active_pids.pop(stage_id, None)
+                
         return CommandExecution(
             returncode=process.returncode,
             stdout=stdout.decode("utf-8", errors="replace"),
@@ -315,6 +346,34 @@ class StageExecutor:
             return False
         text = f"{stdout}\n{stderr}".lower()
         return any(token in text for token in ("rate limit", "limit reached", "quota exceeded", "quota exhausted", "rate_limit_exceeded"))
+
+    def capture_stage_snapshot(self, working_dir: str) -> dict[str, str | list[str]]:
+        """Capture git state for checkpoint resume — no LLM needed, pure git."""
+        result: dict[str, str | list[str]] = {
+            "files_modified": [],
+            "git_diff": "",
+            "git_status": "",
+        }
+        try:
+            diff = subprocess.run(
+                ["git", "diff"],
+                cwd=working_dir, capture_output=True, text=True, check=False,
+            )
+            if diff.returncode == 0:
+                result["git_diff"] = diff.stdout[:50000]  # cap at 50KB
+
+            # Also capture untracked new files
+            status = subprocess.run(
+                ["git", "status", "--short"],
+                cwd=working_dir, capture_output=True, text=True, check=False,
+            )
+            if status.returncode == 0:
+                result["git_status"] = status.stdout[:5000]
+
+            result["files_modified"] = self._list_changed_files(working_dir)
+        except OSError:
+            pass
+        return result
 
     def _list_changed_files(self, working_dir: str) -> list[str]:
         try:

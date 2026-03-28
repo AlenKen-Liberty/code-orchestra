@@ -19,6 +19,9 @@ class DummyExecutor:
     def __init__(self) -> None:
         self.executed = []
 
+    def capture_stage_snapshot(self, working_dir):
+        return {"files_modified": [], "git_diff": "", "git_status": ""}
+
     async def execute(self, stage, handoff_doc_path, working_dir):
         self.executed.append((stage.stage_type, handoff_doc_path, working_dir))
         return StageExecutionResult(

@@ -1,5 +1,5 @@
 from harness.handoff import HandoffProtocol
-from harness.models import StageExecutionResult, StageRecord, StageStatus, TaskRecord, TaskStatus
+from harness.models import StageCheckpoint, StageExecutionResult, StageRecord, StageStatus, TaskRecord, TaskStatus
 
 
 def make_task() -> TaskRecord:
@@ -71,3 +71,52 @@ def test_handoff_saves_stage_output(tmp_path) -> None:
     assert output_path.exists()
     assert "scheduler/planner.py" in content
     assert "Implemented blacklist filtering." in content
+
+
+def test_handoff_includes_checkpoint_resume_context(tmp_path) -> None:
+    protocol = HandoffProtocol(tmp_path / "artifacts")
+    task = make_task()
+    previous = make_stage("stage-plan", "plan", 1, summary="Plan done.")
+    current = make_stage("stage-code", "code", 2)
+
+    checkpoint = StageCheckpoint(
+        stage_id=current.stage_id,
+        task_id=task.task_id,
+        model_used="gemini-3.1-pro",
+        handoff_doc_path="",
+        files_modified=["scheduler/planner.py", "config/blacklist.yaml"],
+        retry_count=1,
+        paused_reason="quota_exhausted",
+        paused_at="2026-03-28T12:00:00+00:00",
+        partial_output="Implemented filtering logic, pending tests...",
+        git_diff="--- a/scheduler/planner.py\n+++ b/scheduler/planner.py\n@@ -10 +10 @@\n+    blocked = load_blacklist()",
+        git_status=" M scheduler/planner.py\n?? config/blacklist.yaml",
+    )
+
+    handoff_path = protocol.write_handoff(task, current, [previous], checkpoint=checkpoint)
+    content = handoff_path.read_text(encoding="utf-8")
+
+    # Checkpoint section is present
+    assert "Resuming from checkpoint" in content
+    assert "gemini-3.1-pro" in content
+    assert "quota_exhausted" in content
+    # Git diff injected
+    assert "load_blacklist()" in content
+    assert "scheduler/planner.py" in content
+    # Partial output injected
+    assert "Implemented filtering logic" in content
+    # Resume instructions
+    assert "CONTINUE from where it left off" in content
+    assert "Do NOT redo work" in content
+
+
+def test_handoff_without_checkpoint_has_no_resume_section(tmp_path) -> None:
+    protocol = HandoffProtocol(tmp_path / "artifacts")
+    task = make_task()
+    current = make_stage("stage-code", "code", 1)
+
+    handoff_path = protocol.write_handoff(task, current, [], checkpoint=None)
+    content = handoff_path.read_text(encoding="utf-8")
+
+    assert "Resuming from checkpoint" not in content
+    assert "CONTINUE from where it left off" not in content

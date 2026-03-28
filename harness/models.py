@@ -160,6 +160,8 @@ class StageCheckpoint:
     paused_reason: str = "quota_exhausted"
     paused_at: str = ""
     partial_output: str = ""
+    git_diff: str = ""
+    git_status: str = ""
 
 
 @dataclass(slots=True)

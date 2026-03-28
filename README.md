@@ -31,6 +31,12 @@ PYTHONPATH=. venv/bin/python scripts/orchestra_cli.py --workflow workflows/multi
 
 All intermediate artifacts and code steps are processed automatically by the agents.
 
+### Additional Capabilities
+
+- **Checkpoint & Resume Recovery:** Automatically captures stage state, including partial outputs and Git diffs. If a pipeline is interrupted (e.g., due to quota limits), it resumes without losing progress.
+- **Dynamic Account Management & Quota Routing:** Interacts with Chat2API to query live quota limits. Features automatic account swapping for Gemini and Codex when tokens are exhausted (see `patch_chat2api.py` for integration details).
+- **Large Prompt Spooling:** Prompts larger than the environment's `PROMPT_MAX_ARG_LEN` are safely spooled to disk, allowing unbounded input sizes to be passed securely to worker agents.
+
 ## Documentation
 
 For detailed information on configuring the pipeline, multi-LLM capabilities, and adding new stages, refer to the documents below:

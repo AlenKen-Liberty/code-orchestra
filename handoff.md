@@ -1,11 +1,15 @@
-# Handoff: review -> code
+# Handoff: test -> e2e_test
 
-## Findings
-1. User-specified stage assignments are not durable across retries. `Harness._run_stage()` resets stages back to pending with the default `clear_model=True` on permission pauses and generic execution retries, and quota exhaustion eventually clears the assignment too. That drops the explicit `(assigned_model, assigned_provider)` pair and the next attempt falls back to `QuotaRouter`, which breaks the feature promise.
-2. Alias normalization is only implemented in the CLI submit path. `IntakeAgent.plan_task()` accepts API `model_overrides` but persists the raw tuple directly, so API callers that pass aliases like `gemini` keep the alias instead of the canonical model name. That misses the "CLI and API, with alias resolution" requirement.
+## Task
+feat: transparent account rotation in chat2api on 429 quota exhaustion
 
-## Verification
-`python3 -m pytest tests/harness/ -v` passed: 43 passed, 3 skipped, 1 warning (`asyncio_mode` unknown config option).
+## Test Summary
+- Executed tests for `code-orchestra` (`python3 -m pytest tests/harness/ -x -q`): 60 passed, 3 skipped, 1 warning.
+- Executed tests for `Chat2API` (`cd ~/scripts/Chat2API && python3 -m pytest -q`): 31 passed.
+- Unit and integration tests for the new quota and account rotation features successfully pass across both repositories.
 
-## Next Step
-Preserve explicit assignments when resetting stages that were user-pinned, move model normalization into a shared API path instead of only `_main_async()`, and add tests that cover API alias resolution plus retry/pause behavior for pre-assigned stages.
+## Next Steps
+- Execute the E2E test requirements:
+  - Simulate 429 on account1 and verify automatic switch to account2.
+  - Simulate all accounts exhausted and verify proper 503 response.
+  - Verify that the orchestra harness correctly uses `acquire-account` for CLI tools.

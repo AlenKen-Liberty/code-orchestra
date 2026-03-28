@@ -20,6 +20,7 @@ from harness.checkpoint import CheckpointStore
 from harness.codex_runtime import CodexAccountRuntime
 from harness.daemon import DaemonManager
 from harness.db import HarnessDB
+from harness.gemini_runtime import GeminiAccountRuntime
 from harness.handoff import HandoffProtocol
 from harness.intake import IntakeAgent
 from harness.logging_utils import configure_logging
@@ -37,6 +38,7 @@ from harness.models import (
 from harness.permission_gate import PermissionGate
 from harness.quota_router import AllQuotaExhaustedError, QuotaRouter
 from harness.stage_executor import PermissionBlockedError, QuotaExhaustedError, StageExecutionError, StageExecutor
+from harness.stage_monitor import StageMonitor, StageProgressSnapshot
 from harness.task_queue import TaskQueue, utcnow_iso
 from harness.telemetry import HarnessTelemetry
 
@@ -56,6 +58,7 @@ class Harness:
         stage_executor: Optional[StageExecutor] = None,
         telemetry: Optional[HarnessTelemetry] = None,
         codex_runtime: Optional[CodexAccountRuntime] = None,
+        gemini_runtime: Optional[GeminiAccountRuntime] = None,
     ) -> None:
         self.db = HarnessDB(db_path)
         self.task_queue = TaskQueue(self.db)
@@ -66,6 +69,8 @@ class Harness:
         self.executor = stage_executor or StageExecutor()
         self.telemetry = telemetry or HarnessTelemetry()
         self.codex_runtime = codex_runtime or CodexAccountRuntime()
+        self.gemini_runtime = gemini_runtime or GeminiAccountRuntime()
+        self.active_monitors: dict[str, StageMonitor] = {}
 
     def submit_task(
         self,
@@ -261,18 +266,27 @@ class Harness:
 
         task_statuses = Counter(task.status.value for task in tasks)
         stage_statuses = Counter(stage.status.value for stage in stages)
-        running_stages = [
-            {
-                "task_id": stage.task_id,
-                "stage_id": stage.stage_id,
-                "stage_type": stage.stage_type,
-                "assigned_model": stage.assigned_model,
-                "assigned_provider": stage.assigned_provider,
-                "account_email": stage.metadata.get("selected_account_email"),
-            }
-            for stage in stages
-            if stage.status == StageStatus.RUNNING
-        ]
+        running_stages = []
+        for stage in stages:
+            if stage.status == StageStatus.RUNNING:
+                stage_data = {
+                    "task_id": stage.task_id,
+                    "stage_id": stage.stage_id,
+                    "stage_type": stage.stage_type,
+                    "assigned_model": stage.assigned_model,
+                    "assigned_provider": stage.assigned_provider,
+                    "account_email": stage.metadata.get("selected_account_email"),
+                }
+                if stage.stage_id in self.active_monitors:
+                    monitor = self.active_monitors[stage.stage_id]
+                    snapshot = monitor.check_progress(settings.HARNESS_STALL_TIMEOUT_SEC)
+                    stage_data.update({
+                        "duration": int(snapshot.duration_sec),
+                        "files_changed": snapshot.files_changed_since_start,
+                        "last_activity": snapshot.latest_file_activity,
+                        "status": snapshot.status,
+                    })
+                running_stages.append(stage_data)
 
         return {
             "generated_at": utcnow_iso(),
@@ -363,12 +377,59 @@ class Harness:
 
             self._ensure_stage_runtime(stage)
             previous = self.task_queue.list_completed_stages(task.task_id)
-            handoff_path = self.handoff.write_handoff(task, stage, previous)
+            # Load checkpoint from previous failed attempt (if any) for resume context
+            checkpoint = self.checkpoints.load(task.task_id, stage.stage_id)
+            handoff_path = self.handoff.write_handoff(task, stage, previous, checkpoint=checkpoint)
             self.task_queue.mark_stage_running(stage.stage_id, str(handoff_path))
             stage = self.task_queue.get_stage(stage.stage_id) or stage
             self._emit_stage_event("stage_started", task, stage)
 
-            result = await self.executor.execute(stage, str(handoff_path), task.working_dir)
+            expected_duration = settings.HARNESS_STAGE_EXPECTED_DURATION.get(stage.stage_type, 300.0)
+            monitor = StageMonitor(
+                working_dir=task.working_dir or ".",
+                expected_duration_sec=expected_duration,
+            )
+            self.active_monitors[stage.stage_id] = monitor
+
+            try:
+                execute_task = asyncio.create_task(
+                    self.executor.execute(stage, str(handoff_path), task.working_dir)
+                )
+
+                is_interactive = sys.stdout.isatty()
+                poll_interval = settings.HARNESS_PROGRESS_POLL_SEC
+
+                while not execute_task.done():
+                    done, _ = await asyncio.wait([execute_task], timeout=poll_interval)
+                    if done:
+                        break
+
+                    # update pid if available
+                    if monitor.pid is None:
+                        monitor.pid = self.executor.get_pid(stage.stage_id)
+
+                    snapshot = monitor.check_progress(settings.HARNESS_STALL_TIMEOUT_SEC)
+                    
+                    self.telemetry.emit(
+                        "stage_progress",
+                        task_id=task.task_id,
+                        stage_id=stage.stage_id,
+                        stage_type=stage.stage_type,
+                        **asdict(snapshot),
+                    )
+                    
+                    if snapshot.status == "stalled":
+                        logger.warning(f"Stage {stage.stage_id} stalled: {snapshot.summary}")
+                        
+                    if is_interactive:
+                        icon = "⚠️" if snapshot.status == "stalled" else "⏳"
+                        model_str = stage.assigned_model or "unknown"
+                        print(f"{icon} {stage.stage_type} ({model_str}) | {int(snapshot.duration_sec)}s | {snapshot.summary} | {snapshot.status}")
+
+                result = execute_task.result()
+            finally:
+                self.active_monitors.pop(stage.stage_id, None)
+
             if stage.verify_cmd and task.working_dir:
                 verification = await self.executor.run_verify_cmd(stage.verify_cmd, task.working_dir)
                 if verification.returncode != 0:
@@ -401,55 +462,63 @@ class Harness:
         except QuotaExhaustedError as exc:
             retry_count = stage.retry_count + 1
             account_email = self._stage_account_email(stage)
-            within_same_model_budget = retry_count <= settings.QUOTA_SAME_MODEL_RETRIES
+            
+            # Report exhaustion and try to get a new account
+            if account_email:
+                try:
+                    self.executor.chat_client.report_exhaustion(exc.provider, account_email)
+                    new_acc = self.executor.chat_client.acquire_account(exc.provider, stage.assigned_model or "")
+                    if new_acc and new_acc.get("email"):
+                        # Update stage metadata with the new account to retry immediately
+                        self.task_queue.update_stage_metadata(
+                            stage.stage_id, {"selected_account_email": new_acc["email"]},
+                        )
+                        self.task_queue.reset_stage_to_pending(
+                            stage.stage_id, retry_count=retry_count, clear_model=False,
+                        )
+                        self.task_queue.update_task_status(task.task_id, TaskStatus.EXECUTING)
+                        
+                        snapshot = self._capture_snapshot(task, stage, exc.partial_output, "quota_exhausted_rotated", retry_count)
+                        self.checkpoints.save(snapshot)
 
-            if within_same_model_budget:
-                # Keep assigned_model — retry the same model after a brief pause
-                self.task_queue.reset_stage_to_pending(
-                    stage.stage_id,
-                    retry_count=retry_count,
-                    clear_model=False,
-                )
-                self.task_queue.update_task_status(task.task_id, TaskStatus.EXECUTING)
-                self._emit_stage_event(
-                    "stage_quota_retry_same_model",
-                    task,
-                    stage,
-                    error=str(exc),
-                    provider=exc.provider,
-                    retry_count=retry_count,
-                    max_same_model=settings.QUOTA_SAME_MODEL_RETRIES,
-                )
-            else:
-                # Exhausted same-model retries — clear model and pause for fallback
-                self.task_queue.reset_stage_to_pending(stage.stage_id, retry_count=retry_count)
-                self.task_queue.update_task_status(task.task_id, TaskStatus.PAUSED_QUOTA)
-                checkpoint = StageCheckpoint(
-                    stage_id=stage.stage_id,
-                    task_id=task.task_id,
-                    model_used=stage.assigned_model or "",
-                    handoff_doc_path=stage.handoff_doc_path or str(self.handoff.handoff_path(task, stage)),
-                    files_modified=[],
-                    retry_count=retry_count,
-                    paused_reason="quota_exhausted",
-                    paused_at=utcnow_iso(),
-                    partial_output=exc.partial_output,
-                )
-                self.checkpoints.save(checkpoint)
-                self._emit_stage_event(
-                    "stage_paused_quota",
-                    task,
-                    stage,
-                    error=str(exc),
-                    provider=exc.provider,
-                )
+                        self._emit_stage_event(
+                            "stage_quota_rotated", task, stage,
+                            error=str(exc), provider=exc.provider,
+                            retry_count=retry_count,
+                            old_account=account_email,
+                            new_account=new_acc["email"]
+                        )
+                        self.task_queue.log_quota_event(
+                            QuotaEventRecord(
+                                event_id=uuid.uuid4().hex,
+                                provider=exc.provider,
+                                account_email=account_email,
+                                event_type="exhausted_rotated",
+                                details={"stage_id": stage.stage_id, "task_id": task.task_id, "retry_count": retry_count, "new_account": new_acc["email"]},
+                                created_at=utcnow_iso(),
+                            )
+                        )
+                        return
+                except Exception as api_err:
+                    logger.warning("Failed to rotate account via chat2api: %s", api_err)
+
+            # If rotation failed or no account available, just pause
+            snapshot = self._capture_snapshot(task, stage, exc.partial_output, "quota_exhausted", retry_count)
+            self.checkpoints.save(snapshot)
+
+            self.task_queue.reset_stage_to_pending(stage.stage_id, retry_count=retry_count)
+            self.task_queue.update_task_status(task.task_id, TaskStatus.PAUSED_QUOTA)
+            self._emit_stage_event(
+                "stage_paused_quota", task, stage,
+                error=str(exc), provider=exc.provider,
+            )
 
             self.task_queue.log_quota_event(
                 QuotaEventRecord(
                     event_id=uuid.uuid4().hex,
                     provider=exc.provider,
                     account_email=account_email,
-                    event_type="quota_retry" if within_same_model_budget else "exhausted",
+                    event_type="exhausted",
                     details={"stage_id": stage.stage_id, "task_id": task.task_id, "retry_count": retry_count},
                     created_at=utcnow_iso(),
                 )
@@ -482,6 +551,10 @@ class Harness:
             )
         except StageExecutionError as exc:
             retry_count = stage.retry_count + 1
+            # Capture snapshot for checkpoint resume on retry
+            snapshot = self._capture_snapshot(task, stage, "", "stage_error", retry_count)
+            self.checkpoints.save(snapshot)
+
             if retry_count > settings.MAX_RETRIES:
                 self.task_queue.fail_stage(stage.stage_id, result_summary=str(exc), retry_count=retry_count)
                 self.task_queue.update_task_status(task.task_id, TaskStatus.FAILED)
@@ -503,13 +576,38 @@ class Harness:
         self.telemetry.emit("task_finished", task_id=task.task_id, status=TaskStatus.DONE.value)
 
     def _ensure_stage_runtime(self, stage: StageRecord) -> None:
-        if stage.assigned_provider != "codex":
-            return
-        self.codex_runtime.ensure_active(self._stage_account_email(stage))
+        if stage.assigned_provider == "codex":
+            self.codex_runtime.ensure_active(self._stage_account_email(stage))
+        elif stage.assigned_provider == "google":
+            self.gemini_runtime.ensure_active(self._stage_account_email(stage))
 
     def _stage_account_email(self, stage: StageRecord) -> str | None:
         account_email = stage.metadata.get("selected_account_email")
         return account_email if isinstance(account_email, str) and account_email else None
+
+    def _capture_snapshot(
+        self,
+        task: TaskRecord,
+        stage: StageRecord,
+        partial_output: str,
+        paused_reason: str,
+        retry_count: int,
+    ) -> StageCheckpoint:
+        """Capture git diff + status for checkpoint resume — no LLM needed."""
+        git_snapshot = self.executor.capture_stage_snapshot(task.working_dir or ".")
+        return StageCheckpoint(
+            stage_id=stage.stage_id,
+            task_id=task.task_id,
+            model_used=stage.assigned_model or "",
+            handoff_doc_path=stage.handoff_doc_path or str(self.handoff.handoff_path(task, stage)),
+            files_modified=list(git_snapshot.get("files_modified", [])),
+            retry_count=retry_count,
+            paused_reason=paused_reason,
+            paused_at=utcnow_iso(),
+            partial_output=partial_output,
+            git_diff=str(git_snapshot.get("git_diff", "")),
+            git_status=str(git_snapshot.get("git_status", "")),
+        )
 
     def _emit_stage_event(
         self,
