@@ -90,14 +90,18 @@ class IntakeAgent:
         *,
         goal: str | None = None,
         verify_cmd: str | None = None,
+        model_overrides: dict[str, tuple[str, str]] | None = None,
     ) -> IntakeResult:
         complexity = self.assess_complexity(description)
         stage_defs = self.COMPLEXITY_RULES[complexity]["stages"]
+        overrides = model_overrides or {}
         stages = [
             PlannedStage(
                 stage_type=stage_type,
                 stage_order=index,
                 model_role=model_role,
+                assigned_model=overrides.get(stage_type, (None, None))[0],
+                assigned_provider=overrides.get(stage_type, (None, None))[1],
                 verify_cmd=verify_cmd if stage_type in {"test", "e2e_test"} else None,
                 metadata=self._stage_metadata(stage_type),
             )

@@ -36,6 +36,8 @@ class PlannedStage:
     stage_type: str
     stage_order: int
     model_role: str
+    assigned_model: Optional[str] = None
+    assigned_provider: Optional[str] = None
     verify_cmd: Optional[str] = None
     metadata: dict[str, Any] = field(default_factory=dict)
 

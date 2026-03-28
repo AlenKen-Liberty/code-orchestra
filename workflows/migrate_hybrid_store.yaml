@@ -1,0 +1,23 @@
+name: "Migrate hybrid-store from ES+Qdrant to PostgreSQL"
+description: |
+  Replace the ES+Qdrant dual-backend in hybrid-store with a single
+  Neon PostgreSQL database (pgvector + tsvector).
+
+stages:
+  - stage_id: design
+    stage_type: plan
+    model_role: planner
+    force_model: gpt-5.4-codex
+    description: "Architecture design for hybrid-store PostgreSQL migration"
+
+  - stage_id: implement
+    stage_type: code
+    model_role: coder
+    force_model: gemini-3.1-pro
+    description: "Implement the PostgreSQL storage backend"
+
+  - stage_id: e2e_test
+    stage_type: e2e_test
+    model_role: e2e_tester
+    force_model: claude-opus-4-6
+    description: "End-to-end testing of the new PostgreSQL backend"

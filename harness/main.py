@@ -76,8 +76,11 @@ class Harness:
         verify_cmd: Optional[str] = None,
         priority: int = 50,
         working_dir: Optional[str] = None,
+        model_overrides: Optional[dict[str, tuple[str, str]]] = None,
     ) -> TaskRecord:
-        intake = self.intake.plan_task(description, goal=goal, verify_cmd=verify_cmd)
+        intake = self.intake.plan_task(
+            description, goal=goal, verify_cmd=verify_cmd, model_overrides=model_overrides
+        )
         if title:
             intake = replace(intake, title=title)
         return self.submit_intake(intake, priority=priority, working_dir=working_dir)
@@ -541,6 +544,7 @@ def build_parser() -> argparse.ArgumentParser:
     submit.add_argument("--verify-cmd", help="Verification command")
     submit.add_argument("--priority", type=int, default=50)
     submit.add_argument("--working-dir", help="Task working directory")
+    submit.add_argument("--model-override", action="append", default=[], help="Override stage model (e.g. code=gemini-3.1-pro)")
 
     chat = subparsers.add_parser("chat", help="Interactive requirement clarification")
     chat.add_argument("description", nargs="?", help="Initial task description")
@@ -634,6 +638,19 @@ def _run_chat_submission(harness: Harness, description: str | None, priority: in
 async def _main_async(args: argparse.Namespace) -> int:
     if args.command == "submit":
         harness = build_cli_harness()
+        
+        model_overrides = {}
+        if getattr(args, "model_override", None):
+            registry = ModelRegistry()
+            for override in args.model_override:
+                if "=" in override:
+                    stage, model_name = override.split("=", 1)
+                    stage = stage.strip()
+                    model_name = model_name.strip()
+                    canonical = registry.resolve(model_name)
+                    provider = registry.provider(model_name) or "unknown"
+                    model_overrides[stage] = (canonical, provider)
+
         task = harness.submit_task(
             args.description,
             title=args.title,
@@ -641,6 +658,7 @@ async def _main_async(args: argparse.Namespace) -> int:
             verify_cmd=args.verify_cmd,
             priority=args.priority,
             working_dir=args.working_dir,
+            model_overrides=model_overrides if model_overrides else None,
         )
         print(task.task_id)
         return 0

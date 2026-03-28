@@ -23,7 +23,7 @@ class CommandExecution:
     stderr: str
 
 
-Runner = Callable[[list[str], str], Awaitable[CommandExecution]]
+Runner = Callable[..., Awaitable[CommandExecution]]
 
 
 class StageExecutionError(RuntimeError):
@@ -97,6 +97,7 @@ class StageExecutor:
             command,
             cwd,
             context=f"stage={stage.stage_type} role={stage.model_role}",
+            stdin_text=prompt,
         )
         combined_output = completed.stdout.strip() or completed.stderr.strip()
 
@@ -119,23 +120,25 @@ class StageExecutor:
         )
 
     def build_command(self, stage: StageRecord, prompt: str, working_dir: str) -> list[str]:
+        """Build CLI command. Prompt is passed via stdin, not as an argument."""
         provider = stage.assigned_provider or self._infer_provider(stage.assigned_model or "")
         model = stage.assigned_model or ""
         cli_model = self.registry.cli_model_id(model)
         if provider == "claude":
+            # Prompt is piped via stdin; no positional prompt argument needed.
             return [
                 "claude",
                 "-p",
+                "--verbose",
                 "--output-format",
                 "stream-json",
                 "--model",
                 cli_model,
                 "--allowedTools",
                 "Edit,Read,Bash,Grep,Glob,Write",
-                prompt,
             ]
         if provider == "codex":
-            cmd = [
+            return [
                 "codex",
                 "exec",
                 "--json",
@@ -144,15 +147,16 @@ class StageExecutor:
                 "--full-auto",
                 prompt,
             ]
-            return cmd
         if provider == "google":
             return [
                 "gemini",
                 "--model",
                 cli_model,
+                "-y",
                 "-p",
                 prompt,
             ]
+        # NOTE: claude uses stdin for prompt (no positional arg); codex/gemini use positional.
         raise StageExecutionError(f"Unsupported provider for CLI execution: {provider}")
 
     async def run_verify_cmd(self, verify_cmd: str, working_dir: str | None) -> CommandExecution:
@@ -220,6 +224,7 @@ class StageExecutor:
         *,
         context: str,
         display_command: Optional[str] = None,
+        stdin_text: Optional[str] = None,
     ) -> CommandExecution:
         command_text = display_command or self._display_command(command)
         decision = await self.permission_gate.decide(
@@ -229,16 +234,18 @@ class StageExecutor:
         )
         if decision.decision not in self.APPROVED_DECISIONS:
             raise PermissionBlockedError(command_text, decision)
-        return await self.runner(command, cwd)
+        return await self.runner(command, cwd, stdin_text=stdin_text)
 
-    async def _run_command(self, command: list[str], cwd: str) -> CommandExecution:
+    async def _run_command(self, command: list[str], cwd: str, *, stdin_text: Optional[str] = None) -> CommandExecution:
         process = await asyncio.create_subprocess_exec(
             *command,
             cwd=cwd,
+            stdin=asyncio.subprocess.PIPE if stdin_text else None,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await process.communicate()
+        stdin_bytes = stdin_text.encode("utf-8") if stdin_text else None
+        stdout, stderr = await process.communicate(input=stdin_bytes)
         return CommandExecution(
             returncode=process.returncode,
             stdout=stdout.decode("utf-8", errors="replace"),

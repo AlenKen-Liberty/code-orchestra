@@ -15,10 +15,11 @@ async def invoke_gemini(
         "gemini",
         "--model",
         model or settings.GEMINI_MODEL,
+        "-y",   # yolo mode: auto-approve all tool calls (write_file, shell, etc.)
     ]
     if cwd:
         command.extend(["--cwd", cwd])
-    command.append(prompt)
+    command.extend(["-p", prompt])
 
     process = await asyncio.create_subprocess_exec(
         *command,
