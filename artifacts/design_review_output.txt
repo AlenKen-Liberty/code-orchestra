@@ -1,8 +1,0 @@
-import operator
-      
-      OPERATIONS = {
-          '+': operator.add,
-          '-': operator.sub,
-          '*': operator.mul,
-          '/': operator.truediv
-      }
